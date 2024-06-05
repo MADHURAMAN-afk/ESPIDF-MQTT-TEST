@@ -7,6 +7,8 @@
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
+#include "esp_netif.h"
+#include <lwip/ip4_addr.h>
 
 static const char *TAG = "mqtt_example";
 
@@ -89,13 +91,21 @@ static void mqtt_app_start(void)
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    ESP_ERROR_CHECK(esp_mqtt_client_start(client));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_start(client));
 }
 
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "Wi-Fi started, attempting to connect...");
+        esp_netif_ip_info_t ip_info;
+        esp_netif_get_ip_info(ESP_IF_WIFI_STA, &ip_info);
         esp_wifi_connect();
+
+        // Access the IP address
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // mqtt_app_start(); 
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGI(TAG, "Wi-Fi disconnected, retrying...");
         esp_wifi_connect();
@@ -103,7 +113,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
+        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);        
         mqtt_app_start();  // Start MQTT after getting the IP
     }
 }
@@ -115,7 +125,7 @@ void app_main() {
 
     ESP_LOGI(TAG, "Initializing TCP/IP stack");
     // Initialize the TCP/IP stack
-    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_netif_init()); 
 
     ESP_LOGI(TAG, "Creating event loop");
     // Create the event loop
@@ -135,11 +145,11 @@ void app_main() {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, NULL));
 
-    ESP_LOGI(TAG, "Setting Wi-Fi mode to STA (Station)");
+    ESP_LOGI(TAG, "Setting Wi-Fi mode to STA");
     // Set Wi-Fi mode to STA (Station)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-    ESP_LOGI(TAG, "Configuring STA (Station) mode");
+    ESP_LOGI(TAG, "Configuring STA  mode");
     // Configure STA (Station) mode
     wifi_config_t sta_config = {
         .sta = {
