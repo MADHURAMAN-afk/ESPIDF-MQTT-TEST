@@ -8,7 +8,7 @@
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include "esp_netif.h"
-#include <lwip/ip4_addr.h>
+#include <string.h>
 
 static const char *TAG = "mqtt_example";
 
@@ -84,12 +84,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 static void mqtt_app_start(void)
 {
     ESP_LOGI(TAG, "Starting MQTT application");
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = BrokerUrl,
-    };
+    esp_mqtt_client_config_t mqtt_cfg = {};
+    mqtt_cfg.broker.address.uri = BrokerUrl;
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_start(client));
 }
 
@@ -111,41 +110,42 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     }
 }
 
-void app_main() {
-    ESP_LOGI(TAG, "Initializing NVS");
-    ESP_ERROR_CHECK(nvs_flash_init());
+extern "C" void app_main() {
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "Initializing TCP/IP stack");
-    ESP_ERROR_CHECK(esp_netif_init()); 
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 
-    ESP_LOGI(TAG, "Creating event loop");
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
 
-    ESP_LOGI(TAG, "Creating event group");
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
     wifi_event_group = xEventGroupCreate();
 
-    ESP_LOGI(TAG, "Initializing Wi-Fi with default configuration");
-    wifi_init_config_t wifi_init_cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_cfg));
-
-    ESP_LOGI(TAG, "Registering event handler for Wi-Fi and IP events");
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
-    ESP_LOGI(TAG,"After esp event any id ");
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, NULL));
-    ESP_LOGI(TAG,"After  ip event sta got ip ");
 
-    ESP_LOGI(TAG, "Setting Wi-Fi mode to STA");
+    wifi_config_t wifi_config = {};
+    strcpy((char *)wifi_config.sta.ssid, STA_SSID);
+    strcpy((char *)wifi_config.sta.password, STA_PASSWORD);
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-
-    ESP_LOGI(TAG, "Configuring STA mode");
-    wifi_config_t sta_config = {
-        .sta = {
-            .ssid = STA_SSID,
-            .password = STA_PASSWORD
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &sta_config));
-
-    ESP_LOGI(TAG, "Starting Wi-Fi");
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Wait for Wi-Fi connection
+    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    if (bits & CONNECTED_BIT) {
+        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", STA_SSID, STA_PASSWORD);
+    } else {
+        ESP_LOGE(TAG, "Failed to connect to SSID:%s, password:%s", STA_SSID, STA_PASSWORD);
+    }
 }
