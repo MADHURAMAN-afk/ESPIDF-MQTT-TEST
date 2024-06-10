@@ -89,7 +89,6 @@ static void mqtt_app_start(void)
     };
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-    /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_start(client));
 }
@@ -97,22 +96,16 @@ static void mqtt_app_start(void)
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "Wi-Fi started, attempting to connect...");
-        esp_netif_ip_info_t ip_info;
-        esp_netif_get_ip_info(ESP_IF_WIFI_STA, &ip_info);
         esp_wifi_connect();
-
-        // Access the IP address
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        
-        // mqtt_app_start(); 
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGI(TAG, "Wi-Fi disconnected, retrying...");
         esp_wifi_connect();
         xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Got IP mask: " IPSTR, IP2STR(&event->ip_info.netmask));
+        ESP_LOGI(TAG, "Got IP gateway: " IPSTR, IP2STR(&event->ip_info.gw));
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);        
         mqtt_app_start();  // Start MQTT after getting the IP
     }
@@ -120,37 +113,31 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
 
 void app_main() {
     ESP_LOGI(TAG, "Initializing NVS");
-    // Initialize NVS
     ESP_ERROR_CHECK(nvs_flash_init());
 
     ESP_LOGI(TAG, "Initializing TCP/IP stack");
-    // Initialize the TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_init()); 
 
     ESP_LOGI(TAG, "Creating event loop");
-    // Create the event loop
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     ESP_LOGI(TAG, "Creating event group");
-    // Create the event group to handle Wi-Fi events
     wifi_event_group = xEventGroupCreate();
 
     ESP_LOGI(TAG, "Initializing Wi-Fi with default configuration");
-    // Initialize Wi-Fi with default configuration
     wifi_init_config_t wifi_init_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_cfg));
 
     ESP_LOGI(TAG, "Registering event handler for Wi-Fi and IP events");
-    // Register the event handler for Wi-Fi events and IP events
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
+    ESP_LOGI(TAG,"After esp event any id ");
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, NULL));
+    ESP_LOGI(TAG,"After  ip event sta got ip ");
 
     ESP_LOGI(TAG, "Setting Wi-Fi mode to STA");
-    // Set Wi-Fi mode to STA (Station)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
-    ESP_LOGI(TAG, "Configuring STA  mode");
-    // Configure STA (Station) mode
+    ESP_LOGI(TAG, "Configuring STA mode");
     wifi_config_t sta_config = {
         .sta = {
             .ssid = STA_SSID,
@@ -160,6 +147,5 @@ void app_main() {
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &sta_config));
 
     ESP_LOGI(TAG, "Starting Wi-Fi");
-    // Start Wi-Fi
     ESP_ERROR_CHECK(esp_wifi_start());
 }
