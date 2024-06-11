@@ -8,7 +8,9 @@
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include "esp_netif.h"
+#include "cJSON.h"
 #include <string.h>
+#include <stdlib.h> // For rand()
 
 static const char *TAG = "mqtt_example";
 
@@ -18,6 +20,7 @@ static const char *TAG = "mqtt_example";
 
 static EventGroupHandle_t wifi_event_group;
 const int CONNECTED_BIT = BIT0;
+static esp_mqtt_client_handle_t client;
 
 static void log_error_if_nonzero(const char *message, int error_code)
 {
@@ -26,34 +29,53 @@ static void log_error_if_nonzero(const char *message, int error_code)
     }
 }
 
+static void send_mqtt_message()
+{
+    // Create JSON object
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "chamber", "Chamber 1");
+    cJSON_AddNumberToObject(root, "temperature", rand() % 100); // Random temperature
+    cJSON_AddNumberToObject(root, "humidity", rand() % 100); // Random humidity
+
+    cJSON *positions = cJSON_CreateObject();
+    cJSON_AddNumberToObject(positions, "cart1", rand() % 2);
+    cJSON_AddNumberToObject(positions, "cart2", rand() % 2);
+    cJSON_AddNumberToObject(positions, "cart3", rand() % 2);
+    cJSON_AddNumberToObject(positions, "cart4", rand() % 2);
+
+    cJSON_AddItemToObject(root, "positions", positions);
+
+    // Convert JSON object to string
+    char *json_string = cJSON_Print(root);
+
+    // Publish JSON string
+    int msg_id = esp_mqtt_client_publish(client, "/topic/qos1", json_string, 0, 1, 0);
+    ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
+
+    // Clean up
+    cJSON_Delete(root);
+    free(json_string);
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t) event_data;
-    esp_mqtt_client_handle_t client = event->client;
-    int msg_id;
     switch ((esp_mqtt_event_id_t) event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-        msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 10, 0);
-        ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
-
-        msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
-        ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-        ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-        ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
+        xTaskCreate([](void *param) {
+            while (true) {
+                send_mqtt_message();
+                vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for 2 seconds
+            }
+        }, "mqtt_send_task", 4096, NULL, 5, NULL);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         break;
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-        msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-        ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -87,7 +109,7 @@ static void mqtt_app_start(void)
     esp_mqtt_client_config_t mqtt_cfg = {};
     mqtt_cfg.broker.address.uri = BrokerUrl;
 
-    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+    client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_start(client));
 }
